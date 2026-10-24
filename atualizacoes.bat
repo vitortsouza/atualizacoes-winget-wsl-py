@@ -356,7 +356,7 @@ if errorlevel 1 (
 
 if "%PACOTES_PYTHON%"=="1" (
     echo Atualizando pacotes Python do usuario no WSL...
-    wsl.exe -e bash -lc "set -o pipefail; python3 -m pip list --user --outdated --format=freeze >/dev/null 2>&1 || exit 3; falhas=0; while IFS= read -r pacote; do [ -n \"$pacote\" ] || continue; python3 -m pip install --user --upgrade \"$pacote\" 2>&1 | tee -a /tmp/atualizacao-wsl.log || { echo \"AVISO: falha ao atualizar $pacote\"; falhas=1; }; done < <(python3 -m pip list --user --outdated --format=freeze 2>/dev/null | cut -d= -f1); exit $falhas"
+    wsl.exe -e bash -lc "set -o pipefail; lista=$(mktemp) || exit 3; if ! python3 -m pip list --user --outdated --format=json 2>> /tmp/atualizacao-wsl.log | python3 -c 'import json,sys; print(chr(10).join(p[\"name\"] for p in json.load(sys.stdin)))' > \"$lista\" 2>> /tmp/atualizacao-wsl.log; then rm -f \"$lista\"; exit 3; fi; falhas=0; while IFS= read -r pacote; do [ -n \"$pacote\" ] || continue; python3 -m pip install --user --upgrade \"$pacote\" 2>&1 | tee -a /tmp/atualizacao-wsl.log || { echo \"AVISO: falha ao atualizar $pacote\"; falhas=1; }; done < \"$lista\"; rm -f \"$lista\"; exit $falhas"
     if errorlevel 1 (
         echo AVISO: Pode ter ocorrido falha nos pacotes Python do WSL.
         echo Consulte: "%WSL_LOG%"
