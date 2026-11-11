@@ -1,4 +1,4 @@
-#Requires -Version 7.2
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     Testes de fumaca dos argumentos de linha de comando.

@@ -1,4 +1,4 @@
-#Requires -Version 7.2
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     Atualiza Winget, WSL, pacotes Linux (APT) e Python no Windows e no WSL.
@@ -851,7 +851,7 @@ if ($opt.IgnorarTrava) {
 try {
     New-Item -ItemType Directory -Path $script:Trava -ErrorAction Stop | Out-Null
     Set-Content -LiteralPath (Join-Path $script:Trava 'dono.txt') `
-        -Value ('PID {0} em {1}' -f $PID, (Get-Date -Format 's')) -Encoding utf8
+        -Value ('PID {0} em {1}' -f $PID, (Get-Date -Format 's')) -Encoding ascii
 }
 catch {
     Write-Host ('Outra execucao esta em andamento (trava: {0}).' -f $script:Trava) -ForegroundColor Yellow

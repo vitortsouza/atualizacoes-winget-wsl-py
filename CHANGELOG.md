@@ -4,12 +4,12 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 
 ## [2.0.0] - 2026-11-11
 
-Reescrita da implementação em PowerShell 7, mantendo `atualizacoes.bat` como
+Reescrita da implementação em PowerShell (5.1+), mantendo `atualizacoes.bat` como
 ponto de entrada.
 
 ### Adicionado
 
-- `atualizacoes.ps1` (PowerShell 7.2+) com toda a lógica de orquestração.
+- `atualizacoes.ps1` (PowerShell 5.1+) com toda a lógica de orquestração.
 - `scripts/wsl.sh` com as rotinas Linux, executado com
   `bash --noprofile --norc`.
 - Novas opções: `--distro`, `--somente`, `--log-dir`, `--timeout`,
@@ -25,7 +25,10 @@ ponto de entrada.
   arquivos pendentes) e no WSL (`/var/run/reboot-required`).
 - Validação da distribuição WSL (existência e distribuição default) antes de
   qualquer operação.
-- Testes de fumaça (`tests/smoke.ps1`) e CI no GitHub Actions.
+- Testes de fumaça (`tests/smoke.ps1`) e CI no GitHub Actions, incluindo
+  execução no PowerShell 5.1.
+- Compatibilidade com o PowerShell 5.1 incluído no Windows: o `.bat` prefere
+  `pwsh` e usa `powershell.exe` como alternativa.
 - `CHANGELOG.md`, `.gitignore` e regras de fim de linha para `.ps1`, `.sh` e
   `.yml`.
 

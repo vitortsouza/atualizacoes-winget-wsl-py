@@ -4,9 +4,10 @@ Automação de manutenção para Windows que atualiza aplicativos do Winget, o
 WSL, os pacotes da distribuição Linux (APT) e o Python instalado no Windows e
 no WSL.
 
-A lógica fica em `atualizacoes.ps1` (PowerShell 7). O `atualizacoes.bat`
-continua sendo o ponto de entrada: ele localiza o `pwsh`, repassa os
-argumentos e devolve o mesmo código de saída para uso manual ou em automação.
+A lógica fica em `atualizacoes.ps1` (PowerShell 5.1 ou superior). O
+`atualizacoes.bat` continua sendo o ponto de entrada: ele localiza o
+PowerShell, repassa os argumentos e devolve o mesmo código de saída para uso
+manual ou em automação.
 
 ## Funcionalidades
 
@@ -35,8 +36,11 @@ argumentos e devolve o mesmo código de saída para uso manual ou em automação
 ## Requisitos
 
 - Windows 10 ou Windows 11 com Winget e WSL.
-- [PowerShell 7.2 ou superior](https://aka.ms/powershell-release). Instalação
-  rápida:
+- PowerShell 5.1 (incluído no Windows 10/11) ou superior. O `.bat` usa o
+  `pwsh` quando disponível e cai para o `powershell.exe` do sistema.
+  O [PowerShell 7](https://aka.ms/powershell-release) é recomendado por
+  encerrar a árvore de processos nos timeouts e por melhores padrões de
+  UTF-8, mas **não é obrigatório**. Para instalá-lo:
   ```bat
   winget install --id Microsoft.PowerShell --source winget
   ```
@@ -222,7 +226,9 @@ protegem o Python do sistema (PEP 668). O script não usa
   início e removida no fim. Se o script for interrompido, use
   `--ignorar-trava` na próxima execução.
 - **Tempo limite:** cada comando externo é encerrado após `--timeout`
-  segundos (código interno `124`) e conta como falha.
+  segundos (código interno `124`) e conta como falha. No PowerShell 7 a
+  árvore de processos é encerrada; no 5.1 o processo direto é encerrado e,
+  para comandos do WSL, a distribuição é terminada com `wsl --terminate`.
 - **Codificação:** o console é ajustado para UTF-8 e o Python recebe
   `PYTHONIOENCODING=utf-8`; saídas UTF-16 do `wsl.exe` são convertidas.
 - **Winget:** `0x8A150014` (nenhuma atualização aplicável) e `0x8A15002B`
@@ -247,11 +253,13 @@ protegem o Python do sistema (PEP 668). O script não usa
 
 ## Solução de problemas
 
-### PowerShell 7 não foi encontrado
+### O lançador não encontra o PowerShell
 
-Instale com `winget install --id Microsoft.PowerShell --source winget` e abra
-um terminal novo. O `.bat` procura o `pwsh` no `PATH`, em
-`%ProgramFiles%\PowerShell\7` e no alias da Microsoft Store.
+O Windows 10/11 inclui o PowerShell 5.1 em
+`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`; confirme que
+esse arquivo existe. O `.bat` também procura `pwsh.exe` no `PATH`, em
+`%ProgramFiles%\PowerShell\7` e no alias da Microsoft Store, e o usa quando
+presente.
 
 ### O Winget não foi encontrado
 
@@ -303,8 +311,8 @@ desativar) em redes lentas.
 
 ```text
 .
-├── atualizacoes.bat          # lançador (localiza o pwsh)
-├── atualizacoes.ps1          # implementação principal (PowerShell 7.2+)
+├── atualizacoes.bat          # lançador (localiza o PowerShell)
+├── atualizacoes.ps1          # implementação principal (PowerShell 5.1+)
 ├── scripts/
 │   └── wsl.sh                # rotinas executadas dentro do WSL
 ├── tests/
@@ -317,7 +325,7 @@ desativar) em redes lentas.
 └── README.md
 ```
 
-Verificações locais:
+Verificações locais (use `pwsh` no PowerShell 7 ou `powershell.exe` no 5.1):
 
 ```powershell
 # Sintaxe
