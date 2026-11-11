@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows (PowerShell 7)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sintaxe do PowerShell
+        shell: pwsh
+        run: |
+          $erros = $null
+          $caminho = Join-Path $PWD 'atualizacoes.ps1'
+          [void][System.Management.Automation.Language.Parser]::ParseFile($caminho, [ref]$null, [ref]$erros)
+          if ($erros) {
+            $erros | Format-List
+            exit 1
+          }
+          Write-Host 'Sem erros de sintaxe.'
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          $achados = Invoke-ScriptAnalyzer -Path ./atualizacoes.ps1 -Severity Error
+          if ($achados) {
+            $achados | Format-Table
+            exit 1
+          }
+          Write-Host 'Nenhum erro do PSScriptAnalyzer.'
+
+      - name: Testes de argumentos
+        shell: pwsh
+        run: ./tests/smoke.ps1
+
+      - name: Lancador .bat
+        shell: cmd
+        run: |
+          call atualizacoes.bat --ajuda
+          if errorlevel 1 exit /b 1
+          call atualizacoes.bat --opcao-invalida
+          if not errorlevel 2 exit /b 1
+
+  shellcheck:
+    name: ShellCheck (wsl.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Analisar scripts/wsl.sh
+        run: shellcheck --severity=warning scripts/wsl.sh

@@ -1,0 +1,6 @@
+# Arquivos gerados em tempo de execucao
+*.log
+logs/
+
+# Testes manuais locais
+.tmp-*
