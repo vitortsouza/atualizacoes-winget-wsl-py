@@ -53,7 +53,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$script:Versao = '2.0.0'
+$script:Versao = '2.0.1'
 $script:Falhas = 0
 $script:Writers = @{}
 $script:RunDir = ''
@@ -161,7 +161,7 @@ function Read-LinhaDisponivel {
     if ($null -eq $linha) { return $null }
 
     # Alguns comandos do wsl.exe respondem em UTF-16LE.
-    $linha = ($linha -replace "`0", '').TrimStart([char]0xFEFF)
+    $linha = (($linha -replace "`0", '').TrimStart([char]0xFEFF)).TrimEnd([char]13)
     if ([string]::IsNullOrWhiteSpace($linha)) {
         return $Leitor.ReadLineAsync()
     }
@@ -324,6 +324,12 @@ function Resolve-Wsl {
         $script:Distro = $padrao
     }
 
+    # O log interno do wsl.sh e por execucao; nao deve crescer indefinidamente.
+    [void](Invoke-Native -Arquivo 'wsl.exe' -Argumentos @(
+            '-d', $script:Distro, '--', 'bash', '--noprofile', '--norc', '-c',
+            ': > /tmp/atualizacao-wsl.log'
+        ) -Silencioso -LimiteSeg 60)
+
     $script:WslDisponivel = $true
     Write-Log -Mensagem ('WSL: usando a distribuicao "{0}".' -f $script:Distro)
     return $true
@@ -334,7 +340,8 @@ function Invoke-WslScript {
         [Parameter(Mandatory)][string]$Comando,
         [string[]]$Argumentos = @(),
         [int]$LimiteSeg = -1,
-        [switch]$Silencioso
+        [switch]$Silencioso,
+        [switch]$ComPty
     )
 
     if (-not (Resolve-Wsl)) { return $null }
@@ -359,7 +366,14 @@ function Invoke-WslScript {
         $sufixo = ' ' + (($Argumentos | ForEach-Object { $_.Replace("'", "'\''") }) -join ' ')
     }
 
-    $comandoBash = "tr -d '\r' < '$seguro' > /tmp/atualizacoes-wsl.sh && exec bash --noprofile --norc /tmp/atualizacoes-wsl.sh $Comando$sufixo"
+    $execucao = "bash --noprofile --norc /tmp/atualizacoes-wsl.sh $Comando$sufixo"
+    if ($ComPty) {
+        # 'script' cria um pseudo-terminal: necessario para o sudo pedir a senha
+        # mesmo com a saida do wsl.exe redirecionada.
+        $execucao = 'script -qec ' + "'" + $execucao.Replace("'", "'\''") + "' /dev/null"
+    }
+
+    $comandoBash = "tr -d '\r' < '$seguro' > /tmp/atualizacoes-wsl.sh && exec $execucao"
     $argsWsl = @('-d', $script:Distro, '--', 'bash', '--noprofile', '--norc', '-c', $comandoBash)
 
     $resultado = Invoke-Native -Arquivo 'wsl.exe' -Argumentos $argsWsl -LogArquivo $script:LogWsl -LimiteSeg $LimiteSeg -Silencioso:$Silencioso
@@ -371,6 +385,18 @@ function Invoke-WslScript {
     }
 
     return $resultado
+}
+
+function Test-PodePerguntar {
+    try {
+        # Sem entrada e saida ligadas ao console, o prompt do sudo nao
+        # apareceria para o usuario.
+        if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { return $false }
+        return [Environment]::UserInteractive
+    }
+    catch {
+        return $false
+    }
 }
 
 function Find-PythonWindows {
@@ -526,28 +552,57 @@ function Invoke-EtapaLinux {
         return
     }
 
-    $acoes = @(
-        [pscustomobject]@{ Nome = 'apt-get update'; Comando = 'apt-update' },
-        [pscustomobject]@{ Nome = 'apt-get full-upgrade'; Comando = 'apt-upgrade' }
-    )
-    if ($script:Opt.Autoremove) {
-        $acoes += [pscustomobject]@{ Nome = 'apt-get autoremove'; Comando = 'apt-autoremove' }
+    $argumentos = @()
+    if (-not $script:Opt.Autoremove) { $argumentos += '--sem-autoremove' }
+
+    # O APT roda em uma unica sessao (e com pseudo-terminal em execucao
+    # interativa), para que o sudo peca a senha apenas uma vez.
+    $comPty = Test-PodePerguntar
+    if (-not $comPty) {
+        Write-Log -Mensagem 'Sem terminal interativo: o sudo nao podera pedir a senha.' -Nivel AVISO
     }
 
-    foreach ($acao in $acoes) {
-        Write-Log -Mensagem ('Executando {0}...' -f $acao.Nome)
-        $r = Invoke-WslScript -Comando $acao.Comando -LimiteSeg $script:Opt.Timeout
-        if ($null -eq $r) {
+    $r = Invoke-WslScript -Comando 'apt-tudo' -Argumentos $argumentos `
+        -LimiteSeg $script:Opt.Timeout -ComPty:$comPty
+
+    if ($null -eq $r) {
+        $script:Falhas++
+        return
+    }
+
+    if ($r.Expirou -or $r.Codigo -eq 124) {
+        Write-Log -Mensagem ('AVISO: a etapa APT excedeu {0}s e foi interrompida.' -f $script:Opt.Timeout) -Nivel AVISO
+        $script:Falhas++
+        return
+    }
+
+    if ($r.Codigo -eq 9) {
+        Write-Log -Mensagem 'AVISO: o sudo nao esta disponivel; nenhum pacote foi alterado.' -Nivel AVISO
+        Write-Log -Mensagem 'Execute o script manualmente ou configure NOPASSWD no sudoers.' -Nivel AVISO
+        $script:Falhas++
+        return
+    }
+
+    $partes = @(
+        [pscustomobject]@{ Bit = 1; Nome = 'apt-get update' },
+        [pscustomobject]@{ Bit = 2; Nome = 'apt-get full-upgrade' },
+        [pscustomobject]@{ Bit = 4; Nome = 'apt-get autoremove' }
+    )
+    $falhou = $false
+    foreach ($parte in $partes) {
+        if (($r.Codigo -band $parte.Bit) -ne 0) {
+            Write-Log -Mensagem ('AVISO: {0} falhou. Consulte {1}' -f $parte.Nome, $script:LogWsl) -Nivel AVISO
             $script:Falhas++
-            return
+            $falhou = $true
         }
-        if ($r.Codigo -ne 0) {
-            Write-Log -Mensagem ('AVISO: {0} falhou (codigo {1}). Consulte {2}' -f $acao.Nome, $r.Codigo, $script:LogWsl) -Nivel AVISO
-            $script:Falhas++
-        }
-        else {
-            Write-Log -Mensagem ('{0} concluido.' -f $acao.Nome) -Nivel OK
-        }
+    }
+
+    if (-not $falhou -and $r.Codigo -eq 0) {
+        Write-Log -Mensagem 'Etapa APT concluida.' -Nivel OK
+    }
+    elseif (-not $falhou) {
+        Write-Log -Mensagem ('AVISO: a etapa APT retornou o codigo {0}. Consulte {1}' -f $r.Codigo, $script:LogWsl) -Nivel AVISO
+        $script:Falhas++
     }
 }
 
@@ -666,7 +721,11 @@ function Invoke-PythonWsl {
     $argumentos = @()
     if (-not $script:Opt.AtualizarPip) { $argumentos += '--sem-pip' }
 
-    $r = Invoke-WslScript -Comando 'python-prepare' -Argumentos $argumentos -LimiteSeg $script:Opt.Timeout
+    # Em terminal interativo, usa pseudo-terminal para permitir que o sudo
+    # peca a senha caso precise instalar python3-pip/python3-venv.
+    $comPty = Test-PodePerguntar
+    $r = Invoke-WslScript -Comando 'python-prepare' -Argumentos $argumentos `
+        -LimiteSeg $script:Opt.Timeout -ComPty:$comPty
     if ($null -eq $r) {
         $script:Falhas++
         return
@@ -914,7 +973,9 @@ try {
         Write-Host 'atualizados em massa. Revise as alteracoes antes de continuar.'
         Write-Host ''
         $resposta = Read-Host 'Deseja continuar? [S/N]'
-        if ($resposta -notmatch '^[sS]') { $cancelado = $true }
+        # Read-Host retorna $null quando a entrada esta fechada; nesse caso
+        # a resposta deve cancelar a execucao, nunca confirmar.
+        if ([string]$resposta -notmatch '^[sS]') { $cancelado = $true }
     }
 
     if ($cancelado) {

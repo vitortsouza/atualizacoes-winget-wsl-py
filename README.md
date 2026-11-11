@@ -55,7 +55,11 @@ manual ou em automação.
 - Conexão com a internet.
 
 O `wsl --update` e alguns instaladores do Winget podem solicitar elevação
-(UAC). O `sudo` pode pedir a senha da distribuição Linux durante a execução.
+(UAC). A etapa APT roda em uma única sessão dentro do WSL: o `sudo` pede a
+senha da distribuição (não a do Windows) **uma vez** e usa o cache para
+`update`, `full-upgrade` e `autoremove`. Por isso ela precisa de um terminal
+interativo; em tarefas agendadas, configure `NOPASSWD` no `sudoers` para os
+comandos do APT (ou execute o script manualmente).
 
 ## Como utilizar
 
@@ -134,8 +138,9 @@ selecionadas.
 2. **WSL:** valida a distribuição, executa `wsl --update` e `wsl --shutdown`
    (o encerramento é ignorado no modo de listagem).
 3. **Pacotes Linux:** `apt-get update`, `apt-get full-upgrade` e, salvo
-   `--sem-autoremove`, `apt-get autoremove`. Cada comando tem seu próprio
-   status, então uma falha no `update` não esconde o resultado do `upgrade`.
+   `--sem-autoremove`, `apt-get autoremove`, na mesma sessão do WSL. Cada
+   comando tem seu próprio status, então uma falha no `update` não esconde o
+   resultado do `upgrade`; o `sudo` pede a senha apenas uma vez.
 4. **Python:** atualiza `pip` e pacotes do usuário no Windows e no WSL.
 
 As falhas são contabilizadas e o resumo final informa quantas ocorreram. Uma
@@ -157,8 +162,8 @@ Use `--log-dir` para gravar em outro local. Os nomes são únicos por execução
 o que evita colisão entre instâncias e rotação manual de logs.
 
 Os logs internos do APT/pip também são gravados em
-`/tmp/atualizacao-wsl.log` dentro da distribuição, anexados a cada execução
-do `scripts/wsl.sh`.
+`/tmp/atualizacao-wsl.log` dentro da distribuição. O arquivo é zerado no
+início de cada execução e o conteúdo relevante já aparece em `wsl.log`.
 
 ## Atualização do Python e do pip
 
@@ -195,6 +200,7 @@ Comandos disponíveis no script auxiliar:
 
 | Comando | Função |
 |---|---|
+| `apt-tudo` | Autentica o `sudo` uma vez e executa `update`, `full-upgrade` e `autoremove` na mesma sessão (usado pelo script). |
 | `info-apt` | Simula o `full-upgrade` (`apt-get -s`). |
 | `apt-update` | `apt-get update`. |
 | `apt-upgrade` | `apt-get -y full-upgrade`. |
@@ -226,9 +232,11 @@ protegem o Python do sistema (PEP 668). O script não usa
   início e removida no fim. Se o script for interrompido, use
   `--ignorar-trava` na próxima execução.
 - **Tempo limite:** cada comando externo é encerrado após `--timeout`
-  segundos (código interno `124`) e conta como falha. No PowerShell 7 a
-  árvore de processos é encerrada; no 5.1 o processo direto é encerrado e,
-  para comandos do WSL, a distribuição é terminada com `wsl --terminate`.
+  segundos (código interno `124`) e conta como falha. Na etapa Linux o
+  limite cobre a sessão inteira (`update` + `full-upgrade` + `autoremove`).
+  No PowerShell 7 a árvore de processos é encerrada; no 5.1 o processo
+  direto é encerrado e, para comandos do WSL, a distribuição é terminada
+  com `wsl --terminate`.
 - **Codificação:** o console é ajustado para UTF-8 e o Python recebe
   `PYTHONIOENCODING=utf-8`; saídas UTF-16 do `wsl.exe` são convertidas.
 - **Winget:** `0x8A150014` (nenhuma atualização aplicável) e `0x8A15002B`
@@ -276,11 +284,21 @@ Confirme que `py -3 --version` ou `python --version` funciona. Ajuste o
 O script evita `--break-system-packages`. Para projetos, use um ambiente
 virtual por projeto; o `pip` global deve ser atualizado pelo APT.
 
-### O APT parou em uma pergunta
+### O APT parou em uma pergunta ou pediu a senha várias vezes
 
 O script usa opções não interativas, mas configurações personalizadas podem
 exigir intervenção. Consulte `wsl.log` para identificar o pacote ou arquivo
 envolvido.
+
+### A etapa Linux falhou por falta de sudo
+
+A autenticação do `sudo` acontece uma vez, no início do APT. Se aparecer
+`o sudo exige senha e as credenciais nao foram validadas`, execute o script
+manualmente em um terminal (com entrada interativa) ou libere os comandos
+usados no `sudoers` com `NOPASSWD`. O script não usa `sudo -S` nem guarda a
+senha: ele cria um pseudo-terminal com `script` apenas para o `sudo -v` e,
+na mesma sessão, usa o cache normal do `sudo` (que expira conforme a
+configuração do sistema, normalmente 15 minutos).
 
 ### Nenhuma distribuição WSL foi encontrada
 

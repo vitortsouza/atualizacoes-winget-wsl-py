@@ -4,9 +4,11 @@
 # Saida vai para stdout (exibida e registrada no Windows) e para $WSL_LOG.
 #
 # Uso:
-#   wsl.sh <comando> [--sem-pip] [--sem-pacotes]
+#   wsl.sh <comando> [--sem-pip] [--sem-pacotes] [--sem-autoremove]
 #
 # Comandos:
+#   apt-tudo         autentica o sudo uma vez e executa update, full-upgrade
+#                    e autoremove na mesma sessao
 #   info-apt         simula o full-upgrade com os indices atuais
 #   apt-update       apt-get update
 #   apt-upgrade      apt-get full-upgrade
@@ -15,11 +17,13 @@
 #   python-prepare   garante python3-pip/python3-venv e atualiza o pip do venv
 #   python-pacotes   atualiza os pacotes do usuario (propaga falhas)
 #   reboot-status    informa se ha reinicializacao pendente
+#   sudo-auth        valida o sudo e mantem as credenciais para a execucao
 #
 # Codigos de saida:
 #   0 sucesso, 1 falha generica, 2 uso invalido, 3 falha ao listar pacotes,
 #   4 python3 ausente, 5 falha ao instalar python3-pip/python3-venv,
-#   6 pip indisponivel, 7 sudo ausente, 8 comando desconhecido.
+#   6 pip indisponivel, 7 sudo ausente, 8 comando desconhecido,
+#   9 autenticacao sudo indisponivel.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -31,6 +35,7 @@ export PYTHONIOENCODING=utf-8
 
 SEM_PIP=0
 SEM_PACOTES=0
+SEM_AUTOREMOVE=0
 COMANDO=""
 
 # Opcoes do APT: entradas de lista (sufixo "::"), preservando as duas flags.
@@ -53,13 +58,27 @@ run() {
 SUDO=()
 preparar_sudo() {
   if [[ ${EUID} -eq 0 ]]; then
+    SUDO=()
     return 0
   fi
   if ! command -v sudo >/dev/null 2>&1; then
     log "ERRO: sudo nao encontrado e o usuario nao e root."
     exit 7
   fi
-  SUDO=(sudo)
+  if sudo -n true 2>/dev/null; then
+    SUDO=(sudo -n)
+    return 0
+  fi
+
+  if [[ -t 0 ]]; then
+    cmd_sudo_auth
+    SUDO=(sudo -n)
+    return 0
+  fi
+
+  log "ERRO: o sudo exige senha e as credenciais nao foram validadas."
+  log "Execute o script em um terminal interativo: a senha e pedida uma vez."
+  exit 9
 }
 
 apt() {
@@ -81,6 +100,45 @@ cmd_apt_upgrade() {
 
 cmd_apt_autoremove() {
   apt -y autoremove
+}
+
+# Executa tudo na mesma sessao (e no mesmo terminal) para que o sudo peca a
+# senha apenas uma vez e os comandos seguintes usem as credenciais em cache.
+# Codigos de retorno (mascara): 1 = update, 2 = upgrade, 4 = autoremove.
+cmd_apt_tudo() {
+  preparar_sudo
+
+  local falhas=0
+
+  log "APT: atualizando os indices..."
+  if apt update; then
+    log "apt-get update concluido."
+  else
+    log "ERRO: apt-get update falhou."
+    falhas=$((falhas | 1))
+  fi
+
+  log "APT: executando full-upgrade..."
+  if apt -y "${APT_CONF[@]}" full-upgrade; then
+    log "apt-get full-upgrade concluido."
+  else
+    log "ERRO: apt-get full-upgrade falhou."
+    falhas=$((falhas | 2))
+  fi
+
+  if [[ ${SEM_AUTOREMOVE} -eq 1 ]]; then
+    log "apt-get autoremove ignorado (--sem-autoremove)."
+  else
+    log "APT: executando autoremove..."
+    if apt -y autoremove; then
+      log "apt-get autoremove concluido."
+    else
+      log "ERRO: apt-get autoremove falhou."
+      falhas=$((falhas | 4))
+    fi
+  fi
+
+  return "$falhas"
 }
 
 cmd_info_python() {
@@ -184,6 +242,43 @@ cmd_python_pacotes() {
   return "$falhas"
 }
 
+cmd_sudo_auth() {
+  if [[ ${EUID} -eq 0 ]]; then
+    log "sudo: executando como root."
+    return 0
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    log "ERRO: sudo nao encontrado e o usuario nao e root."
+    exit 7
+  fi
+
+  if sudo -n true 2>/dev/null; then
+    log "sudo: credenciais ja validadas."
+    return 0
+  fi
+
+  if [[ ! -t 0 ]]; then
+    log "ERRO: o sudo exige senha, mas a entrada padrao nao e um terminal."
+    log "Execute o script em um terminal interativo ou configure NOPASSWD no sudoers."
+    exit 9
+  fi
+
+  log "sudo: digite a senha do Linux (a digitacao nao aparece) e pressione Enter."
+  if ! SUDO_PROMPT=$'Senha do Linux:\n' sudo -v; then
+    log "ERRO: autenticacao do sudo falhou."
+    exit 9
+  fi
+
+  if sudo -n true 2>/dev/null; then
+    log "sudo: autenticado."
+    return 0
+  fi
+
+  log "ERRO: o sudo continua exigindo senha apos a autenticacao."
+  exit 9
+}
+
 cmd_reboot_status() {
   if [[ -f /var/run/reboot-required ]]; then
     log "reboot-required"
@@ -197,13 +292,14 @@ cmd_reboot_status() {
 }
 
 uso() {
-  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
   --sem-pip) SEM_PIP=1 ;;
   --sem-pacotes) SEM_PACOTES=1 ;;
+  --sem-autoremove) SEM_AUTOREMOVE=1 ;;
   -h | --ajuda | --help)
     uso
     exit 0
@@ -224,6 +320,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$COMANDO" in
+apt-tudo) cmd_apt_tudo ;;
 info-apt) cmd_info_apt ;;
 apt-update) cmd_apt_update ;;
 apt-upgrade) cmd_apt_upgrade ;;
@@ -232,6 +329,7 @@ info-python) cmd_info_python ;;
 python-prepare) cmd_python_prepare ;;
 python-pacotes) cmd_python_pacotes ;;
 reboot-status) cmd_reboot_status ;;
+sudo-auth) cmd_sudo_auth ;;
 "")
   uso >&2
   exit 2

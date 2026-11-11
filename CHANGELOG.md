@@ -2,6 +2,22 @@
 
 Todas as mudanças relevantes deste projeto são registradas aqui.
 
+## [2.0.1] - 2026-11-11
+
+### Corrigido
+
+- O APT falhava com `sudo: 3 incorrect password attempts` porque a saída do
+  `wsl.exe` era redirecionada e o `sudo` perdia o terminal. Agora a etapa APT
+  roda em uma única sessão com pseudo-terminal (`script`): o `sudo` pede a
+  senha uma vez e o cache vale para `update`, `full-upgrade` e `autoremove`.
+- A senha não é armazenada pelo PowerShell: ela é digitada no pseudo-terminal
+  e o cache normal do `sudo` é usado dentro da mesma sessão.
+- Sem terminal interativo (entrada ou saída redirecionadas), a etapa Linux
+  falha uma única vez com mensagem clara, em vez de repetir três falhas de
+  sudo.
+- O log interno `/tmp/atualizacao-wsl.log` é zerado no início de cada
+  execução.
+
 ## [2.0.0] - 2026-11-11
 
 Reescrita da implementação em PowerShell (5.1+), mantendo `atualizacoes.bat` como
